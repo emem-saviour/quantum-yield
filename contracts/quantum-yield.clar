@@ -303,3 +303,102 @@
     (ok true)
   )
 )
+
+;; READ-ONLY FUNCTIONS - PROTOCOL INFORMATION
+
+;; Returns the contract owner's principal address
+(define-read-only (get-contract-owner)
+  (ok CONTRACT-OWNER)
+)
+
+;; Returns total STX tokens locked in the protocol
+(define-read-only (get-stx-pool)
+  (ok (var-get stx-pool))
+)
+
+;; Returns the current count of governance proposals
+(define-read-only (get-proposal-count)
+  (ok (var-get proposal-count))
+)
+
+;; PRIVATE FUNCTIONS - INTERNAL CALCULATIONS
+
+;; Calculate user tier and reward multipliers
+;; Determines appropriate tier level based on total stake amount
+(define-private (get-tier-info (stake-amount uint))
+  (if (>= stake-amount u10000000)
+    {
+      tier-level: u3,
+      reward-multiplier: u200,
+    } ;; Gold Tier
+    (if (>= stake-amount u5000000)
+      {
+        tier-level: u2,
+        reward-multiplier: u150,
+      } ;; Silver Tier
+      {
+        tier-level: u1,
+        reward-multiplier: u100,
+      } ;; Bronze Tier
+    )
+  )
+)
+
+;; Compute time-lock bonus multipliers
+;; Calculates additional rewards for longer commitment periods
+(define-private (calculate-lock-multiplier (lock-period uint))
+  (if (>= lock-period u8640) ;; 2 months commitment
+    u150 ;; 1.5x multiplier
+    (if (>= lock-period u4320) ;; 1 month commitment
+      u125 ;; 1.25x multiplier
+      u100 ;; 1x multiplier (flexible)
+    )
+  )
+)
+
+;; Process yield calculations
+;; Computes earned rewards based on stake, multipliers, and time elapsed
+(define-private (calculate-rewards
+    (user principal)
+    (blocks uint)
+  )
+  (let (
+      (staking-position (unwrap! (map-get? StakingPositions user) u0))
+      (user-position (unwrap! (map-get? UserPositions user) u0))
+      (stake-amount (get amount staking-position))
+      (base-rate (var-get base-reward-rate))
+      (multiplier (get rewards-multiplier user-position))
+    )
+    (/ (* (* (* stake-amount base-rate) multiplier) blocks) u14400000)
+  )
+)
+
+;; PRIVATE FUNCTIONS - VALIDATION LOGIC
+
+;; Validate proposal description quality
+;; Ensures proposal descriptions meet minimum standards
+(define-private (is-valid-description (desc (string-utf8 256)))
+  (and
+    (>= (len desc) u10) ;; Minimum meaningful length
+    (<= (len desc) u256) ;; Maximum allowed length
+  )
+)
+
+;; Validate lock period options
+;; Confirms lock period matches available commitment tiers
+(define-private (is-valid-lock-period (lock-period uint))
+  (or
+    (is-eq lock-period u0) ;; Flexible staking
+    (is-eq lock-period u4320) ;; 1-month lock
+    (is-eq lock-period u8640) ;; 2-month lock
+  )
+)
+
+;; Validate voting period duration
+;; Ensures voting periods are within reasonable bounds
+(define-private (is-valid-voting-period (period uint))
+  (and
+    (>= period u100) ;; Minimum deliberation time
+    (<= period u2880) ;; Maximum voting window (~1 day)
+  )
+)
