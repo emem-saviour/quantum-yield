@@ -96,3 +96,105 @@
     features-enabled: (list 10 bool),
   }
 )
+
+;; PUBLIC FUNCTIONS - PROTOCOL MANAGEMENT
+
+;; Initialize protocol with tiered reward structure
+;; Establishes the foundation tier system with progressive benefits
+(define-public (initialize-contract)
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
+    ;; Configure Bronze Tier (Entry Level)
+    (map-set TierLevels u1 {
+      minimum-stake: u1000000, ;; 1M uSTX
+      reward-multiplier: u100, ;; 1x baseline
+      features-enabled: (list true false false false false false false false false false),
+    })
+    ;; Configure Silver Tier (Advanced Features)
+    (map-set TierLevels u2 {
+      minimum-stake: u5000000, ;; 5M uSTX
+      reward-multiplier: u150, ;; 1.5x rewards
+      features-enabled: (list true true true false false false false false false false),
+    })
+    ;; Configure Gold Tier (Premium Benefits)
+    (map-set TierLevels u3 {
+      minimum-stake: u10000000, ;; 10M uSTX
+      reward-multiplier: u200, ;; 2x rewards
+      features-enabled: (list true true true true true false false false false false),
+    })
+    (ok true)
+  )
+)
+
+;; PUBLIC FUNCTIONS - STAKING OPERATIONS
+
+;; Deploy capital with intelligent yield optimization
+;; Commits STX tokens to the protocol with optional time-locked multipliers
+(define-public (stake-stx
+    (amount uint)
+    (lock-period uint)
+  )
+  (let ((current-position (default-to {
+      total-collateral: u0,
+      total-debt: u0,
+      health-factor: u0,
+      last-updated: u0,
+      stx-staked: u0,
+      analytics-tokens: u0,
+      voting-power: u0,
+      tier-level: u0,
+      rewards-multiplier: u100,
+    }
+      (map-get? UserPositions tx-sender)
+    )))
+    (asserts! (is-valid-lock-period lock-period) ERR-INVALID-PROTOCOL)
+    (asserts! (not (var-get contract-paused)) ERR-PAUSED)
+    (asserts! (>= amount (var-get minimum-stake)) ERR-BELOW-MINIMUM)
+    ;; Secure capital transfer to protocol vault
+    (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+    ;; Calculate intelligent tier placement and reward multipliers
+    (let (
+        (new-total-stake (+ (get stx-staked current-position) amount))
+        (tier-info (get-tier-info new-total-stake))
+        (lock-multiplier (calculate-lock-multiplier lock-period))
+      )
+      ;; Register new staking position
+      (map-set StakingPositions tx-sender {
+        amount: amount,
+        start-block: stacks-block-height,
+        last-claim: stacks-block-height,
+        lock-period: lock-period,
+        cooldown-start: none,
+        accumulated-rewards: u0,
+      })
+      ;; Update user's portfolio with enhanced tier benefits
+      (map-set UserPositions tx-sender
+        (merge current-position {
+          stx-staked: new-total-stake,
+          tier-level: (get tier-level tier-info),
+          rewards-multiplier: (* (get reward-multiplier tier-info) lock-multiplier),
+        })
+      )
+      ;; Update global liquidity pool
+      (var-set stx-pool (+ (var-get stx-pool) amount))
+      (ok true)
+    )
+  )
+)
+
+;; Begin secure withdrawal process
+;; Initiates unstaking with mandatory cooling period for security
+(define-public (initiate-unstake (amount uint))
+  (let (
+      (staking-position (unwrap! (map-get? StakingPositions tx-sender) ERR-NO-STAKE))
+      (current-amount (get amount staking-position))
+    )
+    (asserts! (>= current-amount amount) ERR-INSUFFICIENT-STX)
+    (asserts! (is-none (get cooldown-start staking-position)) ERR-COOLDOWN-ACTIVE)
+    ;; Activate security cooldown period
+    (map-set StakingPositions tx-sender
+      (merge staking-position { cooldown-start: (some stacks-block-height) })
+    )
+    (ok true)
+  )
+)
